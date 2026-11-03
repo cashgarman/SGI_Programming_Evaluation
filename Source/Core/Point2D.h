@@ -19,3 +19,5 @@ struct Point2D
     // Constructor
     Point2D(double x, double y) : X(x), Y(y), Width(0), Height(0) {};
 };
+
+#endif

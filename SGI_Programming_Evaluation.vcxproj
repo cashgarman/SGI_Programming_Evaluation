@@ -93,7 +93,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Components\include;$(ProjectDir)Source\Systems\include;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -109,7 +109,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Components\include;$(ProjectDir)Source\Systems\include;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -123,7 +123,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Components\include;$(ProjectDir)Source\Systems\include;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -139,7 +139,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source\Core;$(ProjectDir)Source\Components\include;$(ProjectDir)Source\Systems\include;$(ProjectDir)Source\Entities\Rectangle2D\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -147,16 +147,36 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Source\runner.cpp" />
+    <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="Source\Components\src\AttackComponent.cpp" />
+    <ClCompile Include="Source\Components\src\BaseComponent.cpp" />
+    <ClCompile Include="Source\Components\src\HealthComponent.cpp" />
+    <ClCompile Include="Source\Components\src\MovementComponent.cpp" />
+    <ClCompile Include="Source\Systems\src\AttackSystem.cpp" />
+    <ClCompile Include="Source\Systems\src\BaseSystem.cpp" />
+    <ClCompile Include="Source\Systems\src\HealthSystem.cpp" />
+    <ClCompile Include="Source\Systems\src\MovementSystem.cpp" />
     <ClCompile Include="Source\Entities\Rectangle2D\src\Rectangle2D.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Source\Components\include\AttackComponent.h" />
+    <ClInclude Include="Source\Components\include\BaseComponent.h" />
+    <ClInclude Include="Source\Components\include\HealthComponent.h" />
+    <ClInclude Include="Source\Components\include\MovementComponent.h" />
+    <ClInclude Include="Source\Systems\include\AttackSystem.h" />
+    <ClInclude Include="Source\Systems\include\BaseSystem.h" />
+    <ClInclude Include="Source\Systems\include\HealthSystem.h" />
+    <ClInclude Include="Source\Systems\include\MovementSystem.h" />
+    <ClInclude Include="Source\Core\Entity.h" />
     <ClInclude Include="Source\Core\Point2D.h" />
     <ClInclude Include="Source\Entities\Rectangle2D\include\Rectangle2D.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="entityblueprints.txt" />
     <None Include="Programmer-C-Evaluation.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Source\Tests\" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
