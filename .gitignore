@@ -1,0 +1,51 @@
+# Visual Studio / MSBuild
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+ipch/
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+
+# Build outputs
+*.exe
+*.dll
+*.lib
+*.obj
+*.o
+*.a
+*.ilk
+*.pdb
+*.idb
+*.ipdb
+*.iobj
+*.exp
+*.res
+*.pch
+
+# JetBrains Rider / IntelliJ (user-specific; see .idea/.gitignore for more)
+.idea/workspace.xml
+.idea/httpRequests/
+.idea/shelf/
+
+# VS Code (keep shared tasks/launch; ignore local debug state)
+.vscode/.cache/
+.vscode/ipch/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Optional: local editor backups
+*~
+*.swp
+*.swo
