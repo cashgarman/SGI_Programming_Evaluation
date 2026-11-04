@@ -77,6 +77,95 @@ function Get-DoctestCaseNames {
     }
 }
 
+function Get-RepoRelativePath {
+    param(
+        [string] $Path,
+        [string] $RepoRoot
+    )
+
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetFullPath($RepoRoot)
+    if (-not $root.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $root += [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+        return $full.Substring($root.Length) -replace '\\', '/'
+    }
+
+    return $full -replace '\\', '/'
+}
+
+# VS Code / Cursor terminal links use path:line[:column], not MSVC path(line).
+function Format-TerminalSourceLink {
+    param(
+        [string] $FilePath,
+        [int] $Line,
+        [string] $RepoRoot,
+        [int] $Column = 0
+    )
+
+    $relative = Get-RepoRelativePath -Path $FilePath -RepoRoot $RepoRoot
+    if ($Column -gt 0) {
+        return '{0}:{1}:{2}' -f $relative, $Line, $Column
+    }
+    return '{0}:{1}' -f $relative, $Line
+}
+
+function Format-DoctestOutputLine {
+    param(
+        [string] $Line,
+        [string] $RepoRoot
+    )
+
+    if ($Line -match '^(?<path>[A-Za-z]:[^()]+|\S+)\((?<line>\d+)\)(?<suffix>.*)$') {
+        $link = Format-TerminalSourceLink -FilePath $Matches.path.Trim() -Line ([int]$Matches.line) -RepoRoot $RepoRoot
+        return '{0}{1}' -f $link, $Matches.suffix
+    }
+
+    return $Line
+}
+
+function Get-DoctestFailures {
+    param(
+        [string[]] $OutputLines,
+        [string] $RepoRoot
+    )
+
+    $failures = [System.Collections.Generic.List[object]]::new()
+    $currentCase = $null
+    $caseLocation = $null
+    $pendingCaseLocation = $null
+
+    foreach ($line in $OutputLines) {
+        if ($line -match '^(?<path>.+)\((?<line>\d+)\):\s*$') {
+            $pendingCaseLocation = Format-TerminalSourceLink -FilePath $Matches.path -Line ([int]$Matches.line) -RepoRoot $RepoRoot
+            continue
+        }
+
+        if ($line -match '^\s*TEST CASE:\s*(?<name>.+)$') {
+            $currentCase = $Matches.name.Trim()
+            if ($pendingCaseLocation) {
+                $caseLocation = $pendingCaseLocation
+                $pendingCaseLocation = $null
+            }
+            continue
+        }
+
+        if ($line -match '^(?<path>.+)\((?<line>\d+)\):\s*ERROR:\s*(?<message>.+)$') {
+            $assertLocation = Format-TerminalSourceLink -FilePath $Matches.path -Line ([int]$Matches.line) -RepoRoot $RepoRoot
+            $failures.Add([pscustomobject]@{
+                    CaseName         = $currentCase
+                    CaseLocation     = $caseLocation
+                    AssertionLocation = $assertLocation
+                    Message          = $Matches.message.Trim()
+                })
+        }
+    }
+
+    return $failures
+}
+
 function Get-DoctestRunStats {
     param([string[]] $OutputLines)
 
@@ -111,12 +200,40 @@ function Get-DoctestRunStats {
     return $stats
 }
 
+function Get-FailureLinkByCaseName {
+    param([object[]] $Failures)
+
+    $links = @{}
+    foreach ($failure in $Failures) {
+        $name = [string]$failure.CaseName
+        if (-not $name -or $links.ContainsKey($name)) {
+            continue
+        }
+
+        $link = if ($failure.AssertionLocation) { $failure.AssertionLocation } else { $failure.CaseLocation }
+        if ($link) {
+            $links[$name] = $link
+        }
+    }
+
+    return $links
+}
+
 function Write-CompactTestSummary {
     param(
         [string[]] $CaseNames,
         [hashtable] $Stats,
-        [int] $ExitCode
+        [int] $ExitCode,
+        [object[]] $Failures = @()
     )
+
+    $failureLinks = Get-FailureLinkByCaseName -Failures $Failures
+    $failedCaseNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($failure in $Failures) {
+        if ($failure.CaseName) {
+            [void]$failedCaseNames.Add([string]$failure.CaseName)
+        }
+    }
 
     $total = if ($Stats.cases -gt 0) { $Stats.cases } else { $CaseNames.Count }
     $passed = $Stats.passed
@@ -132,12 +249,63 @@ function Write-CompactTestSummary {
     }
 
     for ($i = 0; $i -lt $CaseNames.Count; $i++) {
-        $mark = if ($ExitCode -eq 0) { 'ok' } else { 'FAIL' }
-        Write-Host ("  [{0}] {1}" -f $mark, $CaseNames[$i])
+        $name = $CaseNames[$i]
+        $isFailed = $failedCaseNames.Contains([string]$name)
+        if ($ExitCode -eq 0) {
+            $mark = 'ok'
+        }
+        elseif ($failedCaseNames.Count -gt 0) {
+            $mark = if ($isFailed) { 'FAIL' } else { 'ok' }
+        }
+        else {
+            $mark = 'FAIL'
+        }
+
+        $line = "  [{0}] {1}" -f $mark, $name
+        if ($mark -eq 'FAIL' -and $failureLinks.ContainsKey([string]$name)) {
+            $line = '{0}  {1}' -f $line, $failureLinks[[string]$name]
+        }
+        Write-Host $line
     }
 
     if ($ExitCode -ne 0 -and $Stats.status) {
         Write-Host ("  -> {0}" -f $Stats.status) -ForegroundColor Red
+    }
+}
+
+function Write-DoctestOutput {
+    param(
+        [string[]] $OutputLines,
+        [string] $RepoRoot
+    )
+
+    foreach ($line in $OutputLines) {
+        Write-Host (Format-DoctestOutputLine -Line $line -RepoRoot $RepoRoot)
+    }
+}
+
+function Write-FailedTestLinkList {
+    param([object[]] $Failures)
+
+    if ($Failures.Count -eq 0) {
+        return
+    }
+
+    Write-Host ''
+    Write-Host 'Failed test links (Ctrl+click):' -ForegroundColor Red
+    foreach ($failure in $Failures) {
+        $link = if ($failure.AssertionLocation) { $failure.AssertionLocation } else { $failure.CaseLocation }
+        if (-not $link) {
+            continue
+        }
+
+        $label = [string]$failure.CaseName
+        if ($label) {
+            Write-Host ('  {0}  {1}' -f $link, $label)
+        }
+        else {
+            Write-Host ('  {0}' -f $link)
+        }
     }
 }
 
@@ -193,6 +361,7 @@ if ($ShowAssertions) {
 $testOutput = @(& $testExe @testArgs 2>&1 | ForEach-Object { [string]$_ })
 $testExit = $LASTEXITCODE
 $stats = Get-DoctestRunStats -OutputLines $testOutput
+$failures = @(Get-DoctestFailures -OutputLines $testOutput -RepoRoot $RepoRoot)
 
 if ($stats.cases -eq 0 -and $caseNames.Count -gt 0) {
     $stats.cases = $caseNames.Count
@@ -201,26 +370,40 @@ if ($stats.cases -eq 0 -and $caseNames.Count -gt 0) {
     }
 }
 
+$verboseFailureOutput = @()
+if ($testExit -ne 0 -and $failures.Count -eq 0) {
+    $verboseFailureOutput = @(& $testExe -ni -nv 2>&1 | ForEach-Object { [string]$_ })
+    $failures = @(Get-DoctestFailures -OutputLines $verboseFailureOutput -RepoRoot $RepoRoot)
+}
+
 Write-Host ''
 if ($VerboseTestOutput) {
-    $testOutput | ForEach-Object { Write-Host $_ }
+    Write-DoctestOutput -OutputLines $testOutput -RepoRoot $RepoRoot
 }
 elseif (-not $MinimalTestOutput) {
-    Write-CompactTestSummary -CaseNames $caseNames -Stats $stats -ExitCode $testExit
+    Write-CompactTestSummary -CaseNames $caseNames -Stats $stats -ExitCode $testExit -Failures $failures
 }
 else {
     if ($testOutput.Count -gt 0) {
-        $testOutput | ForEach-Object { Write-Host $_ }
+        Write-DoctestOutput -OutputLines $testOutput -RepoRoot $RepoRoot
     }
-    Write-CompactTestSummary -CaseNames $caseNames -Stats $stats -ExitCode $testExit
+    Write-CompactTestSummary -CaseNames $caseNames -Stats $stats -ExitCode $testExit -Failures $failures
 }
 
 if ($testExit -ne 0) {
     if (-not $VerboseTestOutput) {
         Write-Host ''
         Write-Host 'Failure details (verbose rerun):'
-        & $testExe -ni -nv
+        if ($verboseFailureOutput.Count -eq 0) {
+            $verboseFailureOutput = @(& $testExe -ni -nv 2>&1 | ForEach-Object { [string]$_ })
+        }
+        Write-DoctestOutput -OutputLines $verboseFailureOutput -RepoRoot $RepoRoot
     }
+    elseif ($failures.Count -eq 0) {
+        $failures = @(Get-DoctestFailures -OutputLines $testOutput -RepoRoot $RepoRoot)
+    }
+
+    Write-FailedTestLinkList -Failures $failures
     Write-Host ''
     Write-Error "Tests failed with exit code $testExit"
     exit $testExit

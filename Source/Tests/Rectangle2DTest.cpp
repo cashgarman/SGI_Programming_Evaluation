@@ -3,7 +3,7 @@
 #include <string>
 #include "Rectangle2D.h"
 
-TEST_CASE("Rectangle2D collision detection - true")
+TEST_CASE("Rectangle2D collision detection - naive - true")
 {
     // Arrange
     Rectangle2D rect1(0, 0, 10, 10);
@@ -16,7 +16,7 @@ TEST_CASE("Rectangle2D collision detection - true")
     CHECK(collides);
 }
 
-TEST_CASE("Rectangle2D collision detection - false")
+TEST_CASE("Rectangle2D collision detection - naive - false")
 {
     // Arrange
     Rectangle2D rect1(0, 0, 10, 10);

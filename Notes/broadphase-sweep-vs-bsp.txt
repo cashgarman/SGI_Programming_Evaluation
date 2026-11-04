@@ -1,0 +1,332 @@
+Broadphase collision: Sweep-and-Prune vs Binary Space Partitioning (BSP)
+Axis-aligned 2D rectangles (AABB broadphase)
+================================================================================
+
+This file compares two broadphase strategies. Both reduce how many rectangle
+pairs reach a narrowphase intersection test. Neither replaces the actual
+overlap test from Step 1 of the evaluation.
+
+
+--------------------------------------------------------------------------------
+1. SWEEP-AND-PRUNE (sort-and-sweep on one axis)
+--------------------------------------------------------------------------------
+
+Description:
+  Project each rectangle onto an axis (here, X). Sort by minimum X (min_x).
+  Walk the sorted list: for each rectangle A, compare A only to later
+  rectangles B whose min_x is still less than or equal to A's max_x. Once
+  B's min_x passes A's max_x, no further B in the list can overlap A on X,
+  so the inner loop can stop for that A.
+
+  Optional: maintain an "active list" of rectangles whose X intervals still
+  overlap the sweep position; test new entries only against actives. Same
+  idea, often used in 3D physics engines.
+
+  Pairs that survive the X overlap check may still be tested on Y (or you
+  require overlap on both axes in one combined test).
+
+
+Pseudocode — sort by min_x, early-out on X:
+
+  function count_unique_intersections_sweep(rectangles):
+      n = length(rectangles)
+      if n < 2:
+          return 0
+
+      // Each entry: index into rectangles, min_x, max_x (and min_y, max_y for narrowphase)
+      endpoints = empty list
+      for i from 0 to n-1:
+          r = rectangles[i]
+          append (i, r.min_x, r.max_x, r.min_y, r.max_y) to endpoints
+
+      sort endpoints by min_x ascending
+
+      unique_pairs = empty set   // store (min(i,j), max(i,j)) to count each pair once
+
+      for a from 0 to n-2:
+          (_, ax0, ax1, ay0, ay1) = endpoints[a]
+          for b from a+1 to n-1:
+              (_, bx0, bx1, by0, by1) = endpoints[b]
+
+              // X separation: no overlap on X => no intersection; and all later b have bx0 >= this bx0
+              if bx0 > ax1:
+                  break inner loop   // sorted by min_x, so rest cannot overlap A on X
+
+              // Narrowphase (both axes) — same logic as Rectangle2D intersect
+              if intervals_overlap(ax0, ax1, bx0, bx1) and intervals_overlap(ay0, ay1, by0, by1):
+                  pair = canonical_pair(a_index, b_index)
+                  add pair to unique_pairs
+
+      return size(unique_pairs)
+
+
+  function intervals_overlap(min_a, max_a, min_b, max_b):
+      return not (max_a < min_b or max_b < min_a)
+
+
+Active-list variant (same algorithm, different shape):
+
+  sort all rectangles by min_x
+  active = empty list
+  for each rect R in sorted order:
+      remove from active any Q where Q.max_x < R.min_x
+      for each Q in active:
+          if R intersects Q (full AABB test):
+              record unique pair (R, Q)
+      add R to active
+
+
+Typical cost:
+  Sort: O(n log n). Inner work depends on how many X-overlaps exist; worst
+  case O(n^2) when all X ranges overlap (e.g. tall stack sharing same X span).
+
+
+--------------------------------------------------------------------------------
+2. BINARY SPACE PARTITIONING (BSP tree for broadphase)
+--------------------------------------------------------------------------------
+
+Description:
+  Recursively split space with axis-aligned planes (vertical or horizontal
+  in 2D). Each node owns a region and holds references to rectangles that
+  intersect that region. Rectangles that straddle a split plane may be stored
+  in both children, or kept in the parent, depending on implementation.
+
+  To find candidate pairs: descend the tree; at each leaf (or cell), test
+  all pairs among rectangles listed in that node (or test each rectangle
+  against others in the same bucket). Pairs in different leaves that never
+  share a node are never tested together — that is the broadphase cull.
+
+  This is a spatial index, not the same BSP used for rendering visibility;
+  the idea is the same: partition space, localize queries.
+
+
+Pseudocode — build tree, query pairs per node:
+
+  // Simple bucket BSP: split until depth limit or few rectangles per node
+  node:
+      bounds          // axis-aligned region (x0,y0,x1,y1)
+      rect_indices    // list of rectangle indices overlapping this bounds
+      left, right     // child nodes (null if leaf)
+
+  function build_bsp(rect_indices, bounds, depth, max_depth, max_per_leaf):
+      node = new node with bounds and rect_indices
+      if depth >= max_depth or length(rect_indices) <= max_per_leaf:
+          return node as leaf
+
+      // Choose split: e.g. median of rectangle centers on X or longer axis of bounds
+      split_axis = choose_axis(bounds, rect_indices)
+      split_pos = median_center(rect_indices, split_axis)
+
+      left_bounds, right_bounds = split bounds on split_axis at split_pos
+
+      left_indices = empty
+      right_indices = empty
+      for each index i in rect_indices:
+          r = rectangles[i]
+          if r overlaps left_bounds:
+              add i to left_indices
+          if r overlaps right_bounds:
+              add i to right_indices
+
+      // Rectangles overlapping both sides appear in both children (common for broadphase)
+      node.left = build_bsp(left_indices, left_bounds, depth+1, ...)
+      node.right = build_bsp(right_indices, right_bounds, depth+1, ...)
+      return node
+
+
+  function count_pairs_in_node(node, unique_pairs):
+      // All pairs among rectangles assigned to this leaf/cell
+      list = node.rect_indices
+      for a from 0 to length(list)-2:
+          for b from a+1 to length(list)-1:
+              i = list[a]
+              j = list[b]
+              if rectangles[i] intersects rectangles[j]:
+                  add canonical_pair(i, j) to unique_pairs
+
+
+  function collect_pairs_bsp(root, unique_pairs):
+      if root is leaf or root has no children:
+          count_pairs_in_node(root, unique_pairs)
+      else:
+          collect_pairs_bsp(root.left, unique_pairs)
+          collect_pairs_bsp(root.right, unique_pairs)
+          // Optional: also test cross-boundary straddlers kept in parent
+
+
+  function count_unique_intersections_bsp(rectangles):
+      world_bounds = union of all rectangle bounds (or fixed scene box)
+      all_indices = [0 .. n-1]
+      root = build_bsp(all_indices, world_bounds, depth=0, ...)
+      unique_pairs = empty set
+      collect_pairs_bsp(root, unique_pairs)
+      return size(unique_pairs)
+
+
+Note:
+  Duplicates can occur if the same pair is tested in two sibling leaves when
+  both rectangles straddle a split. Use a unique_pair set, or assign each
+  rectangle to a single deepest node only (harder when straddling).
+
+
+Typical cost:
+  Build: roughly O(n log n) per level with good splits; can degrade if many
+  rectangles span every split. Query all pairs: sum over nodes of k^2 for
+  k rectangles per node; best when rectangles are spatially localized.
+
+
+--------------------------------------------------------------------------------
+3. WHEN TO PREFER WHICH
+--------------------------------------------------------------------------------
+
+Prefer sweep-and-prune when:
+  - Many objects are already sorted or nearly sorted along the sweep axis
+    (e.g. mostly moving along X, or temporal coherence frame-to-frame).
+  - Implementation simplicity matters; one sort plus a tight inner loop is
+    easy to wire to the evaluation's timed intersection pass.
+  - Scene is moderate size or X extents are short so the inner loop breaks
+    early often.
+
+Prefer BSP (or similar spatial partitions: quadtree, grid, BVH) when:
+  - Rectangles are spread across a large 2D area and overlap few neighbors
+    on average (many empty regions).
+  - You need incremental updates or localized queries (what overlaps this
+    point or this moved rectangle?) rather than one global all-pairs pass.
+  - Worst-case X overlap is high (everyone shares a wide X band) so sweep
+    degenerates toward O(n^2); a 2D partition can still separate along Y.
+
+For ~10,000 axis-aligned rectangles with unknown distribution:
+  - Start with sweep-and-prune on X then Y overlap check: simple, predictable,
+    good baseline for the evaluation timer.
+  - If profiling shows most time in the inner loop because X ranges all overlap,
+    consider a uniform grid or quadtree broadphase, or BSP with careful handling
+    of straddlers and duplicate pair suppression.
+
+Neither approach changes the narrowphase definition: two Entity bounding boxes
+intersect iff their Rectangle2D intervals overlap on both X and Y.
+
+
+--------------------------------------------------------------------------------
+4. ECS GOTCHA: std::vector<std::unique_ptr<Component>> AND COPYABLE Entity
+    (Step 2 of the evaluation)
+--------------------------------------------------------------------------------
+
+Context:
+  Step 2 asks for an Entity that is copyable and holds a collection of
+  Components. A natural ownership model is unique_ptr per component in a
+  vector. unique_ptr expresses sole ownership: only one owner may destroy
+  the object. Copying would duplicate ownership of the same heap object,
+  which C++ forbids.
+
+
+Why the compiler rejects copying:
+
+  class Component { ... virtual ~Component() = default; };
+
+  class Entity {
+      std::vector<std::unique_ptr<Component>> m_components;
+      Rectangle2D m_bounds;
+  public:
+      // Compiler-generated copy constructor tries something like:
+      //   Entity(const Entity& other)
+      //     : m_bounds(other.m_bounds)
+      //     , m_components(other.m_components)   // ERROR HERE
+      //
+      // std::vector's copy constructor copies each element. Each element
+      // is std::unique_ptr<Component>. unique_ptr's copy constructor is
+      // deleted (not available).
+      //
+      // Same for copy assignment:
+      //   Entity& operator=(const Entity& other) {
+      //       m_bounds = other.m_bounds;
+      //       m_components = other.m_components;   // ERROR HERE
+      //       return *this;
+      //   }
+  };
+
+  Typical diagnostic (wording varies by compiler):
+    "use of deleted function std::unique_ptr<...>::unique_ptr(const unique_ptr&)"
+    "call to deleted constructor"
+    "Entity::Entity(const Entity&) ... implicitly deleted"
+
+
+Pseudocode — what you wanted vs what C++ allows:
+
+  // NOT allowed: deep copy by copying the vector of unique_ptrs
+  function broken_copy_entity(source):
+      dest = new Entity
+      dest.bounds = source.bounds
+      dest.components = source.components   // compile error: vector copy copies unique_ptrs
+
+  // Allowed: move transfers ownership; source is left empty
+  function move_entity(source):
+      dest = new Entity
+      dest.bounds = source.bounds
+      dest.components = move(source.components)   // OK: vector move moves each unique_ptr
+      // source.components is now empty; source is valid but gutted
+
+
+Fix A — implement copy via clone (Entity stays "copyable" in the assignment sense):
+
+  function clone_component(ptr):
+      return ptr->clone()   // virtual clone returns unique_ptr<Component>
+
+  function copy_construct_entity(other):
+      new_entity.bounds = other.bounds
+      new_entity.components = empty vector
+      for each owned_ptr in other.components:
+          append clone_component(owned_ptr) to new_entity.components
+      return new_entity
+
+  // Each copy owns its own Component instances on the heap.
+  // Cost: one allocation (and clone logic) per component per copy.
+
+
+Fix B — move-only Entity (if copy is not actually required):
+
+  delete copy constructor and copy assignment
+  provide move constructor and move assignment (default often OK)
+  // Step 2 explicitly asks for copyable Entity — Fix B alone does not satisfy that.
+
+
+Fix C — non-owning views alongside ownership elsewhere:
+
+  // Owning storage (one place):
+  component_pool = vector<unique_ptr<Component>>   // or vector of concrete variants
+
+  // Entity holds indices or raw pointers (non-owning):
+  class Entity {
+      Rectangle2D bounds
+      vector<Component*> m_components   // does NOT own; no delete in Entity dtor
+  }
+
+  // Copying Entity copies the pointer values (shallow). All copies alias the
+  // same Component objects unless you deep-clone on purpose.
+  // Safe when Entities are not the sole owners — e.g. components live in a
+  // registry/Archetype and Entity is a handle + component list.
+
+  function copy_entity_shallow(source):
+      dest.bounds = source.bounds
+      dest.components = source.components   // copies pointer addresses only — OK
+
+
+Fix D — std::shared_ptr instead of unique_ptr (copyable handles, shared ownership):
+
+  vector<shared_ptr<Component>> m_components
+  // Entity copy copies the shared_ptrs (refcount++). Same Component instance
+  // shared by multiple Entities. Often wrong for "one HealthComponent per
+  // Entity" unless you intend sharing; use when aliasing is desired.
+
+
+Summary for the evaluation:
+
+  vector<unique_ptr<T>> inside Entity blocks implicit copy. To make Entity
+  copyable with unique_ptr ownership, write an explicit copy constructor and
+  copy assignment that clone each component (Fix A). Moving the vector is fine
+  for move semantics but does not give you two independent Entities. Raw
+  pointers or indices in Entity (Fix C) make shallow copy trivial but move
+  ownership rules to a registry you must document.
+
+
+================================================================================
+End of file
